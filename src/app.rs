@@ -425,6 +425,19 @@ fn explorer_matches_channel(bus: &str, channel_id: u32, label: &str, query: &str
         || format!("0x{channel_id:X}").to_ascii_lowercase().contains(&q)
 }
 
+/// Reserve useful trace space while resizing the Capture Explorer.
+fn explorer_panel_width(available: f32, requested: f32) -> f32 {
+    let width = available.max(0.0);
+    let maximum = (width - 360.0).max(120.0).min(width * 0.48);
+    requested.clamp(280.0_f32.min(maximum), maximum)
+}
+
+/// Constrain the docked inspector so the main trace remains interactive.
+fn docked_pane_extent(available: f32, requested: f32, main_min: f32, pane_min: f32) -> f32 {
+    let maximum = (available - main_min - 5.0).max(0.0);
+    requested.clamp(pane_min.min(maximum), maximum)
+}
+
 fn home_control_style(ui: &mut egui::Ui, p: HomePalette) {
     let style = ui.style_mut();
     style.spacing.item_spacing = Vec2::new(10.0, 9.0);
@@ -650,9 +663,9 @@ impl LogLensApp {
             explorer_search: String::new(),
             explorer_protocol: "All".into(),
             inspector_pane: InspectorPane::Details,
-            inspector_height: 330.0,
+            inspector_height: 260.0,
             inspector_width: 460.0,
-            project_tree_width: 300.0,
+            project_tree_width: 360.0,
             inspector_dock: InspectorDock::Bottom,
             floating_panes: BTreeSet::new(),
             graphics_view_start_s: 0.0,
@@ -2408,6 +2421,23 @@ impl LogLensApp {
         let key_count = d.index.by_key.len();
         let duration = self.cached_stats.as_ref().map(|stats| stats.duration_s)
             .unwrap_or_else(|| d.frames.last().map(|f| f.relative_time_s).unwrap_or(0.0));
+        if let Some(warning) = d.warnings.iter().find(|w| w.starts_with("Safe load limit reached")) {
+            egui::Frame::new().fill(ui.visuals().faint_bg_color)
+                .stroke(Stroke::new(1.0, Color32::from_rgb(211, 147, 45)))
+                .corner_radius(egui::CornerRadius::same(8))
+                .inner_margin(egui::Margin::symmetric(12, 9))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(egui::RichText::new("PARTIAL CAPTURE").strong().color(Color32::from_rgb(220, 153, 46)));
+                        ui.label(warning);
+                        if ui.add_enabled(self.background_load.is_none(),
+                            egui::Button::new("Reload selected channels")).clicked() {
+                            self.reload_selected_channels();
+                        }
+                    });
+                });
+            ui.add_space(6.0);
+        }
         egui::Frame::new().fill(palette.hero)
             .stroke(Stroke::new(1.0, palette.hero_border))
             .corner_radius(egui::CornerRadius::same(10))
@@ -3293,7 +3323,7 @@ impl LogLensApp {
         let available = ui.available_rect_before_wrap();
         let splitter = 5.0;
         let left_w = if self.show_network_tree {
-            self.project_tree_width.clamp(220.0, (available.width() * 0.46).max(220.0))
+            explorer_panel_width(available.width(), self.project_tree_width)
         } else { 0.0 };
         let tree_split_w = if self.show_network_tree { splitter } else { 0.0 };
         let work_left = available.left() + left_w + tree_split_w;
@@ -3301,19 +3331,21 @@ impl LogLensApp {
 
         let mut trace_rect = work_rect;
         let mut inspector_rect = egui::Rect::NOTHING;
+        // Keep the trace wide enough when the application window is narrow.
+        if work_rect.width() < 840.0 && self.inspector_dock == InspectorDock::Right {
+            self.inspector_dock = InspectorDock::Bottom;
+        }
         let has_docked = self.inspector_pane != InspectorPane::None;
         if has_docked {
             match self.inspector_dock {
                 InspectorDock::Bottom => {
-                    let max_h = (work_rect.height() - 120.0).max(220.0);
-                    let h = self.inspector_height.clamp(180.0, max_h);
+                    let h = docked_pane_extent(work_rect.height(), self.inspector_height, 220.0, 160.0);
                     let y = work_rect.bottom() - h;
                     trace_rect.max.y = y - splitter;
                     inspector_rect = egui::Rect::from_min_max(egui::pos2(work_rect.left(), y), work_rect.max);
                 }
                 InspectorDock::Right => {
-                    let max_w = (work_rect.width() - 300.0).max(280.0);
-                    let w = self.inspector_width.clamp(280.0, max_w);
+                    let w = docked_pane_extent(work_rect.width(), self.inspector_width, 300.0, 240.0);
                     let x = work_rect.right() - w;
                     trace_rect.max.x = x - splitter;
                     inspector_rect = egui::Rect::from_min_max(egui::pos2(x, work_rect.top()), work_rect.max);
@@ -3329,8 +3361,10 @@ impl LogLensApp {
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(left_rect), |ui| {
                 egui::Frame::new().fill(ui.visuals().faint_bg_color).show(ui, |ui| {
                     ui.set_min_size(left_rect.size());
+                    ui.spacing_mut().item_spacing.y = 7.0;
+                    ui.spacing_mut().interact_size.y = 26.0;
                     ui.horizontal(|ui| {
-                        ui.strong("CAPTURE EXPLORER");
+                        ui.label(egui::RichText::new("CAPTURE EXPLORER").size(14.0).strong());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("×").on_hover_text("Hide Capture Explorer").clicked() {
                                 self.show_network_tree = false;
@@ -3413,7 +3447,7 @@ impl LogLensApp {
                                                 explorer_channel_names.get(&ch).map(String::as_str), explorer_show_raw);
                                             let label = if loaded { display.clone() }
                                                 else { format!("{display} · not loaded") };
-                                            if ui.checkbox(&mut enabled, label)
+                                            if ui.checkbox(&mut enabled, egui::RichText::new(label).size(13.0))
                                                 .on_hover_text(if loaded {
                                                     "Show/hide this channel in the active analysis scope"
                                                 } else {
@@ -3449,7 +3483,7 @@ impl LogLensApp {
             );
             let resp = ui.allocate_rect(split_rect, Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
             if resp.dragged() {
-                self.project_tree_width = (self.project_tree_width + resp.drag_delta().x).clamp(220.0, (available.width() * 0.55).max(220.0));
+                self.project_tree_width = explorer_panel_width(available.width(), self.project_tree_width + resp.drag_delta().x);
             }
         }
 
@@ -3556,8 +3590,8 @@ impl LogLensApp {
             let resp = ui.allocate_rect(split_rect, Sense::drag()).on_hover_cursor(cursor);
             if resp.dragged() {
                 match self.inspector_dock {
-                    InspectorDock::Bottom => self.inspector_height = (self.inspector_height - resp.drag_delta().y).clamp(180.0, work_rect.height() - 120.0),
-                    InspectorDock::Right => self.inspector_width = (self.inspector_width - resp.drag_delta().x).clamp(280.0, work_rect.width() - 300.0),
+                    InspectorDock::Bottom => self.inspector_height = docked_pane_extent(work_rect.height(), self.inspector_height - resp.drag_delta().y, 220.0, 160.0),
+                    InspectorDock::Right => self.inspector_width = docked_pane_extent(work_rect.width(), self.inspector_width - resp.drag_delta().x, 300.0, 240.0),
                 }
             }
 
@@ -5428,7 +5462,7 @@ impl LogLensApp {
 
     fn canoe_trace_table_virtual(&mut self, ui: &mut egui::Ui, d: &Dataset, visible_count: usize, channel_names: &BTreeMap<u32, String>) {
         let trace_render_started=Instant::now();
-        const ROW_H:f32=20.0;
+        const ROW_H:f32=23.0;
         let indices_len=visible_count.min(self.cached_scoped_indices.len());
 
         // Invalidate formatted rows only when the Trace scope changes.
@@ -5505,7 +5539,7 @@ impl LogLensApp {
     }
 
     fn canoe_trace_table(&mut self, ui: &mut egui::Ui, d: &Dataset, rows: &[TraceRow], channel_names: &BTreeMap<u32, String>) {
-        let row_h = 21.0;
+        let row_h = 23.0;
         if let Some(select_all)=trace_selection_command(ui) {
             self.clear_trace_selection();
             if select_all {
@@ -9634,6 +9668,21 @@ mod tecmp_graph_regressions {
             assert_eq!(digital_value_at(&d,name,"0x123",1,Some(0),Some(7),5.001),Some(1.0));
         }
     }
+    #[test]
+    fn capture_explorer_responsive_panels_keep_trace_space() {
+        assert_eq!(explorer_panel_width(1440.0, 360.0), 360.0);
+        assert_eq!(explorer_panel_width(1920.0, 180.0), 280.0);
+        assert!(explorer_panel_width(800.0, 2000.0) <= 384.0);
+        let narrow = explorer_panel_width(420.0, 360.0);
+        assert!(narrow <= 420.0 * 0.48);
+        let height = docked_pane_extent(450.0, 330.0, 220.0, 160.0);
+        assert!(height <= 225.0);
+        assert!(450.0 - height - 5.0 >= 220.0);
+        let width = docked_pane_extent(1100.0, 800.0, 300.0, 240.0);
+        assert!(1100.0 - width - 5.0 >= 300.0);
+        assert_eq!(docked_pane_extent(300.0, 200.0, 300.0, 240.0), 0.0);
+    }
+
     #[test]
     fn capture_explorer_search_filters_names_hex_and_protocol_without_mutating_scope() {
         let mut enabled = BTreeSet::from(["CAN|1".to_string(), "ETH|10".to_string()]);
