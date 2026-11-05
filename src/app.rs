@@ -752,6 +752,7 @@ impl LogLensApp {
     }
 
     fn invalidate_dataset_graphics_caches(&mut self) {
+        self.export_preview_summary = None;
         // Raw waveforms and classification are dataset-derived. Classification readiness
         // must always be invalidated together with its cache (v0.46.1 invariant).
         self.cached_waveforms.clear();
@@ -792,6 +793,7 @@ impl LogLensApp {
         // byte classification are capture-derived and intentionally remain valid.
         self.cached_decoded_signal_waveforms.clear();
         self.cached_decoded_signal_indices.clear();
+        self.export_preview_summary = None;
         self.signal_config_dirty=false;
     }
 
@@ -2952,7 +2954,8 @@ impl LogLensApp {
             else { table_preview(ui, &self.vehicle_db, 8); }
         });
 
-        let mut keys=d.index.by_key.keys().cloned().collect::<Vec<_>>(); keys.sort();
+        // BTreeMap keys are already sorted: avoid allocating/cloning every frame ID on repaint.
+        let keys=&d.index.by_key;
         egui::CollapsingHeader::new("Byte Analysis").default_open(false).show(ui,|ui|{
             ui.horizontal(|ui|{
                 if ui.button("Add current frame").clicked()&&!self.selected_frame_key.is_empty(){self.multi_frame_keys.insert(self.selected_frame_key.clone());self.multi_activity_signature.clear();}
@@ -2967,7 +2970,7 @@ impl LogLensApp {
                 }
                 ui.label(format!("{} selected",self.multi_frame_keys.len()));
             });
-            egui::ScrollArea::vertical().max_height(110.0).show(ui,|ui|{ui.horizontal_wrapped(|ui|{for k in &keys{let mut on=self.multi_frame_keys.contains(k);if ui.checkbox(&mut on,frame_key_display(k)).changed(){if on{self.multi_frame_keys.insert(k.clone());}else{self.multi_frame_keys.remove(k);}self.multi_activity_signature.clear();}}});});
+            egui::ScrollArea::vertical().max_height(110.0).show(ui,|ui|{ui.horizontal_wrapped(|ui|{for k in keys.keys(){let mut on=self.multi_frame_keys.contains(k);if ui.checkbox(&mut on,frame_key_display(k)).changed(){if on{self.multi_frame_keys.insert(k.clone());}else{self.multi_frame_keys.remove(k);}self.multi_activity_signature.clear();}}});});
             if !self.multi_frame_keys.is_empty(){
                 ui.separator();
                 ui.strong("Selected Bytes");
@@ -3023,7 +3026,7 @@ impl LogLensApp {
         ui.separator();
         ui.horizontal(|ui| {
             egui::ComboBox::from_label("Frame ID / Key").selected_text(if self.selected_frame_key.is_empty() { "Select".to_string() } else { frame_key_display(&self.selected_frame_key) }).show_ui(ui, |ui| {
-                for k in &keys { ui.selectable_value(&mut self.selected_frame_key, k.clone(), frame_key_display(k)); }
+                for k in keys.keys() { ui.selectable_value(&mut self.selected_frame_key, k.clone(), frame_key_display(k)); }
             });
             let channels = self.selected_frame_channels(&d);
             egui::ComboBox::from_label("Channel").selected_text(self.selected_channel.map(|v| self.channel_label(v)).unwrap_or_else(|| "All".into())).show_ui(ui, |ui| {
@@ -3141,7 +3144,7 @@ impl LogLensApp {
         ui.checkbox(&mut self.compare_ids, "Compare two frame IDs bit activity");
         if self.compare_ids {
             ui.horizontal_wrapped(|ui| {
-                for k in keys.iter().take(100) {
+                for k in keys.keys().take(100) {
                     let mut on = self.compare_keys.contains(k);
                     if ui.checkbox(&mut on, k).changed() {
                         if on && self.compare_keys.len() < 2 { self.compare_keys.insert(k.clone()); }
@@ -3169,7 +3172,7 @@ impl LogLensApp {
         egui::CollapsingHeader::new("Custom Signal Preview").default_open(false).show(ui, |ui| {
             ui.text_edit_singleline(&mut self.custom_name);
             egui::ComboBox::from_label("Frame").selected_text(if self.custom_frame.is_empty() { "Select" } else { &self.custom_frame }).show_ui(ui, |ui| {
-                for k in &keys { ui.selectable_value(&mut self.custom_frame, k.clone(), k); }
+                for k in keys.keys() { ui.selectable_value(&mut self.custom_frame, k.clone(), k); }
             });
             ui.horizontal(|ui| {
                 ui.add(egui::DragValue::new(&mut self.custom_start_byte).range(0..=63).prefix("Byte "));
