@@ -5801,96 +5801,61 @@ impl LogLensApp {
     }
 
     fn analysis_workspace(&mut self, ui: &mut egui::Ui) {
-        let Some(_d) = self.dataset.clone() else { return; };
-
-        // Clean engineering layout: one compact command bar, one narrow navigator,
-        // and one large analysis work area. Measurement controls are intentionally absent.
-        egui::Frame::new()
-            .fill(ui.visuals().faint_bg_color)
-            .inner_margin(egui::Margin::symmetric(6, 3))
+        if self.dataset.is_none() { return; }
+        let palette = HomePalette::new(ui.visuals().dark_mode);
+        // The analysis tools are top-level tabs instead of a permanent 176 px sidebar.
+        // Only the active tool draws its controls; decoding stays request/cache driven.
+        egui::Frame::new().fill(palette.surface)
+            .stroke(Stroke::new(1.0, palette.border))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(12, 10))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_sized([120.0, 32.0], egui::Label::new(egui::RichText::new("Analysis").strong().size(15.0)));
+                workspace_section_header(ui, "Signal Analysis", "Byte activity, discovery and diagnostics");
+                ui.add_space(7.0);
+                ui.horizontal_wrapped(|ui| {
+                    for (page, label) in [
+                        (AnalysisPage::FrameByte, "Frame / Byte"),
+                        (AnalysisPage::SignalDiscovery, "Signal Discovery"),
+                        (AnalysisPage::Timing, "Timing / Jitter"),
+                        (AnalysisPage::CountersCrc, "Counter / CRC"),
+                        (AnalysisPage::Events, "CM Markers"),
+                        (AnalysisPage::AbCompare, "A / B Compare"),
+                    ] {
+                        if workspace_subtab(ui, self.analysis_page == page, label) {
+                            self.analysis_page = page;
+                        }
+                    }
+                });
+                ui.add_space(5.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(format!("{} channels", self.project_channels.len())).weak());
+                    ui.label(egui::RichText::new(format!("{} configured signals", self.signals.len())).weak());
+                    ui.label(egui::RichText::new(format!("{} candidates", self.candidates.len())).weak());
                     ui.separator();
-                    let page_name = match self.analysis_page {
-                        AnalysisPage::FrameByte => "Frame / Byte",
-                        AnalysisPage::SignalDiscovery => "Signal Discovery",
-                        AnalysisPage::Timing => "Timing / Jitter",
-                        AnalysisPage::CountersCrc => "Counters / CRC",
-                        AnalysisPage::Events => "CM Markers",
-                        AnalysisPage::AbCompare => "A ↔ B Compare",
-                    };
-                    ui.add_sized([150.0, 32.0], egui::Label::new(egui::RichText::new(page_name).strong()));
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add_sized([104.0, 32.0], egui::Button::new("Clear")).on_hover_text("Clear discovered candidate signals").clicked() {
+                    if ui.button("Detect Signals").on_hover_text("Run DBC-free signal candidate discovery").clicked() {
+                        self.analysis_page = AnalysisPage::SignalDiscovery;
+                        self.candidates_ready = false;
+                    }
+                    ui.menu_button("More", |ui| {
+                        if ui.button("Clear discovered candidates").clicked() {
                             self.candidates.clear();
                             self.candidates_ready = false;
-                        }
-                        if ui.add_sized([126.0, 32.0], egui::Button::new("Detect Signals")).on_hover_text("Run DBC-free signal candidate discovery").clicked() {
-                            self.analysis_page = AnalysisPage::SignalDiscovery;
-                            self.candidates_ready = false;
+                            ui.close();
                         }
                     });
                 });
             });
-        ui.add_space(3.0);
-
-        let available_h = ui.available_height();
-        ui.horizontal_top(|ui| {
-            // Navigator: compact rows, not large card-like buttons.
-            ui.allocate_ui_with_layout(
-                egui::vec2(176.0, available_h),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    egui::Frame::new()
-                        .fill(ui.visuals().faint_bg_color)
-                        .inner_margin(egui::Margin::symmetric(6, 6))
-                        .show(ui, |ui| {
-                            ui.set_min_width(164.0);
-                            ui.small(egui::RichText::new("ANALYSIS TOOLS").strong());
-                            ui.add_space(5.0);
-                            if ui.add_sized([164.0, 30.0], egui::SelectableLabel::new(self.analysis_page == AnalysisPage::FrameByte, "Byte Analysis")).clicked() {
-                                self.analysis_page = AnalysisPage::FrameByte;
-                            }
-                            if ui.add_sized([164.0, 30.0], egui::SelectableLabel::new(self.analysis_page == AnalysisPage::SignalDiscovery, "Signal Discovery")).clicked() {
-                                self.analysis_page = AnalysisPage::SignalDiscovery;
-                            }
-                            if ui.add_sized([164.0, 30.0], egui::SelectableLabel::new(self.analysis_page == AnalysisPage::Timing, "Timing / Jitter")).clicked() {
-                                self.analysis_page = AnalysisPage::Timing;
-                            }
-                            if ui.add_sized([164.0, 30.0], egui::SelectableLabel::new(self.analysis_page == AnalysisPage::CountersCrc, "Counters / CRC")).clicked() {
-                                self.analysis_page = AnalysisPage::CountersCrc;
-                            }
-                            if ui.add_sized([164.0, 30.0], egui::SelectableLabel::new(self.analysis_page == AnalysisPage::Events, "CM Markers")).clicked() {
-                                self.analysis_page = AnalysisPage::Events;
-                            }
-                            if ui.add_sized([164.0, 30.0], egui::SelectableLabel::new(self.analysis_page == AnalysisPage::AbCompare, "A ↔ B Compare")).clicked() {
-                                self.analysis_page = AnalysisPage::AbCompare;
-                            }
-                            ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(5.0);
-                            ui.small(egui::RichText::new("STATUS").strong());
-                            ui.horizontal(|ui| { ui.weak("Channels"); ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label(self.project_channels.len().to_string()); }); });
-                            ui.horizontal(|ui| { ui.weak("Signals"); ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label(self.signals.len().to_string()); }); });
-                            ui.horizontal(|ui| { ui.weak("Candidates"); ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| { ui.label(self.candidates.len().to_string()); }); });
-                        });
-                },
-            );
-
-            ui.add_space(3.0);
-            ui.separator();
-            ui.add_space(3.0);
-
-            // Work area consumes the remaining width and owns its scrolling.
-            ui.vertical(|ui| {
-                ui.set_min_width((ui.available_width() - 2.0).max(520.0));
+        ui.add_space(8.0);
+        egui::Frame::new().fill(palette.surface)
+            .stroke(Stroke::new(1.0, palette.border))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width().max(0.0));
                 egui::ScrollArea::both()
-                    .id_salt("analysis_content_v122")
+                    .id_salt("analysis_content_v123")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
                         match self.analysis_page {
                             AnalysisPage::FrameByte => self.frame_explorer(ui),
                             AnalysisPage::SignalDiscovery => self.signal_processing(ui),
@@ -5903,7 +5868,6 @@ impl LogLensApp {
                         }
                     });
             });
-        });
     }
 
     fn configuration_workspace(&mut self, ui: &mut egui::Ui) {
