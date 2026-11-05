@@ -2441,14 +2441,14 @@ impl LogLensApp {
         egui::Frame::new().fill(palette.hero)
             .stroke(Stroke::new(1.0, palette.hero_border))
             .corner_radius(egui::CornerRadius::same(10))
-            .inner_margin(egui::Margin::symmetric(16, 12))
+            .inner_margin(egui::Margin::symmetric(18, 14))
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new("WORKFLOW / STEP 03").size(10.0).strong().color(palette.accent));
-                        ui.label(egui::RichText::new("Capture Explorer & Analysis Workspace").size(20.0).strong().color(palette.text));
+                        ui.label(egui::RichText::new("Capture Explorer & Analysis Workspace").size(22.0).strong().color(palette.text));
                         ui.label(egui::RichText::new("Browse networks, inspect frames, replay events and open waveforms.")
-                            .size(12.0).color(palette.muted));
+                            .size(13.0).color(palette.muted));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Show Explorer").on_hover_text("Reveal the protocol/channel tree").clicked() {
@@ -2468,7 +2468,7 @@ impl LogLensApp {
                     for (label, value) in stats {
                         ui.vertical(|ui| {
                             ui.label(egui::RichText::new(label).size(10.0).color(palette.muted));
-                            ui.label(egui::RichText::new(value).size(17.0).strong().color(palette.text));
+                            ui.label(egui::RichText::new(value).size(19.0).strong().color(palette.text));
                         });
                         ui.add_space(24.0);
                     }
@@ -3216,10 +3216,14 @@ impl LogLensApp {
 
     fn measurement_toolbar(&mut self, ui: &mut egui::Ui, d: &Dataset) {
         // Measurement owns capture/replay controls. Analysis and Configuration use purpose-built toolbars.
+        let palette = HomePalette::new(ui.visuals().dark_mode);
         egui::Frame::new()
-            .fill(ui.visuals().faint_bg_color)
-            .inner_margin(egui::Margin::symmetric(6, 4))
+            .fill(palette.surface)
+            .stroke(Stroke::new(1.0, palette.border))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(9, 7))
             .show(ui, |ui| {
+                ui.set_min_width((ui.available_width() - 18.0).max(0.0));
                 egui::ScrollArea::horizontal().id_salt("measurement_toolbar_scroll_v121").show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if ui.add_sized([104.0, 34.0], egui::Button::new("Open")).on_hover_text("Open an automotive capture/log").clicked() { self.open_log(); }
@@ -3265,13 +3269,13 @@ impl LogLensApp {
                         self.show_network_tree = true;
                         self.workspace = Workspace::Measurement;
                     }
-                    let graphics_active = self.workspace == Workspace::Measurement
-                        && (self.inspector_pane == InspectorPane::Graphics || self.floating_panes.contains(&InspectorPane::Graphics));
+                    let graphics_active = self.graphics_viewer_open
+                        || self.floating_panes.contains(&InspectorPane::Graphics);
                     if ui.add_sized([100.0, 34.0], egui::SelectableLabel::new(graphics_active, "Graphics"))
-                        .on_hover_text("Open the single Graphics workspace").clicked() {
+                        .on_hover_text("Open the dedicated waveform viewer; keep Frame Inspector docked").clicked() {
                         self.workspace = Workspace::Measurement;
-                        self.inspector_pane = InspectorPane::Graphics;
-                        self.floating_panes.remove(&InspectorPane::Graphics);
+                        self.inspector_pane = InspectorPane::Details;
+                        self.graphics_viewer_open = true;
                     }
                     if ui.add_sized([96.0, 34.0], egui::SelectableLabel::new(self.workspace == Workspace::Measurement && self.inspector_pane == InspectorPane::None, "Trace")).on_hover_text("Maximize Frame Trace").clicked() {
                         self.workspace = Workspace::Measurement;
@@ -3289,15 +3293,19 @@ impl LogLensApp {
         ui.add_space(5.0);
 
         egui::Frame::new()
-            .fill(ui.visuals().extreme_bg_color)
-            .inner_margin(egui::Margin::symmetric(10, 5))
+            .fill(palette.surface)
+            .stroke(Stroke::new(1.0, palette.border))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(12, 8))
             .show(ui, |ui| {
+                ui.set_min_width((ui.available_width() - 24.0).max(0.0));
                 ui.horizontal_wrapped(|ui| {
                     ui.strong("REPLAY");
                     let (replay_start, replay_end, replay_label) = self.replay_bounds(d);
                     self.replay_position_s = self.replay_position_s.clamp(replay_start, replay_end.max(replay_start));
                     let slider = egui::Slider::new(&mut self.replay_position_s, replay_start..=replay_end.max(replay_start + 0.000_001)).show_value(false);
-                    if ui.add_sized([260.0, 22.0], slider).on_hover_text("Offline replay timeline").changed() {
+                    let slider_width = (ui.available_width() - 285.0).max(170.0);
+                    if ui.add_sized([slider_width, 26.0], slider).on_hover_text("Offline replay timeline").changed() {
                         self.replay_anchor = if self.measurement_running && !self.measurement_paused { Some(Instant::now()) } else { None };
                     }
                     let first_ns = d.frames.first().map(|f| f.timestamp_ns).unwrap_or(0);
@@ -3306,8 +3314,8 @@ impl LogLensApp {
                     let range_start_ns = timestamp_at_relative(first_ns, replay_start);
                     let range_end_ns = timestamp_at_relative(first_ns, replay_end);
                     let prefix = replay_label.as_deref().unwrap_or("Capture");
-                    ui.monospace(format!("{}: {} / {}", prefix, format_timestamp_ns(replay_ns), format_timestamp_ns(range_end_ns)))
-                        .on_hover_text(format!("Range start: {}\nRange end: {}\nCapture start: {}\nCapture end: {}\nRelative replay: {:.6} s", format_timestamp_ns(range_start_ns), format_timestamp_ns(range_end_ns), format_timestamp_ns(first_ns), format_timestamp_ns(last_ns), self.replay_position_s));
+                    ui.monospace(format!("{prefix} · {:.3} s / {:.3} s", self.replay_position_s, replay_end))
+                        .on_hover_text(format!("Replay timestamp: {}\nRange start: {}\nRange end: {}\nCapture start: {}\nCapture end: {}\nRelative replay: {:.6} s", format_timestamp_ns(replay_ns), format_timestamp_ns(range_start_ns), format_timestamp_ns(range_end_ns), format_timestamp_ns(first_ns), format_timestamp_ns(last_ns), self.replay_position_s));
                 });
             });
         ui.add_space(5.0);
@@ -3315,6 +3323,30 @@ impl LogLensApp {
 
     fn canoe_workspace(&mut self, ui: &mut egui::Ui) {
         let Some(d) = self.dataset.clone() else { return; };
+        let palette = HomePalette::new(ui.visuals().dark_mode);
+        // Page 3 only: use the same legible type, spacing and dark surfaces as the approved preview.
+        // This local UI style deliberately leaves Home and Channel Selection unchanged.
+        {
+            let style = ui.style_mut();
+            style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(14.0));
+            style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(13.0));
+            style.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(12.0));
+            style.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(12.0));
+            style.spacing.item_spacing = Vec2::new(8.0, 7.0);
+            style.spacing.button_padding = Vec2::new(11.0, 7.0);
+            style.spacing.interact_size.y = 29.0;
+            style.visuals.faint_bg_color = palette.surface;
+            style.visuals.extreme_bg_color = palette.backdrop;
+        }
+        ui.painter().rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, palette.backdrop);
+        // Historic sessions may have a docked Graphics placeholder. The approved
+        // layout uses a Frame Inspector here and a dedicated Waveform Viewer instead.
+        if self.inspector_pane == InspectorPane::Graphics {
+            self.inspector_pane = InspectorPane::Details;
+        }
+        if self.selected_trace_row.is_none() && !d.frames.is_empty() {
+            self.selected_trace_row = Some(0);
+        }
         self.ensure_filter_cache();
 
         self.capture_explorer_overview(ui, &d);
@@ -3359,7 +3391,10 @@ impl LogLensApp {
             let explorer_show_raw = self.show_raw_ids;
             let left_rect = egui::Rect::from_min_max(available.min, egui::pos2(available.left() + left_w, available.bottom()));
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(left_rect), |ui| {
-                egui::Frame::new().fill(ui.visuals().faint_bg_color).show(ui, |ui| {
+                egui::Frame::new().fill(palette.surface)
+                .stroke(Stroke::new(1.0, palette.border))
+                .corner_radius(egui::CornerRadius::same(8))
+                .show(ui, |ui| {
                     ui.set_min_size(left_rect.size());
                     ui.spacing_mut().item_spacing.y = 7.0;
                     ui.spacing_mut().interact_size.y = 26.0;
@@ -3421,7 +3456,9 @@ impl LogLensApp {
                         }
                     });
                     ui.separator();
+                    let channel_list_height = (ui.available_height() - 95.0).max(90.0);
                     egui::ScrollArea::vertical().id_salt("capture_explorer_tree_r5")
+                        .max_height(channel_list_height)
                         .auto_shrink([false, false]).show(ui, |ui| {
                             if visible_matches == 0 {
                                 ui.add_space(14.0);
@@ -3460,20 +3497,19 @@ impl LogLensApp {
                                         }
                                     });
                             }
-                            ui.add_space(8.0);
-                            ui.separator();
-                            egui::CollapsingHeader::new("QUICK ANALYSIS").default_open(false)
-                                .show(ui, |ui| {
-                                    if ui.button("Frame / Byte Inspector").clicked() {
-                                        self.analysis_page = AnalysisPage::FrameByte;
-                                        self.workspace = Workspace::Analysis;
-                                    }
-                                    if ui.button("Signal Discovery").clicked() {
-                                        self.analysis_page = AnalysisPage::SignalDiscovery;
-                                        self.workspace = Workspace::Analysis;
-                                    }
-                                });
                         });
+                    ui.separator();
+                    ui.label(egui::RichText::new("QUICK ANALYSIS").size(11.0).strong().color(palette.muted));
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("Frame / Byte Inspector").clicked() {
+                            self.analysis_page = AnalysisPage::FrameByte;
+                            self.workspace = Workspace::Analysis;
+                        }
+                        if ui.button("Signal Discovery").clicked() {
+                            self.analysis_page = AnalysisPage::SignalDiscovery;
+                            self.workspace = Workspace::Analysis;
+                        }
+                    });
                 });
             });
 
@@ -3488,10 +3524,13 @@ impl LogLensApp {
         }
 
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(trace_rect), |ui| {
-            egui::Frame::new().fill(ui.visuals().faint_bg_color).show(ui, |ui| {
+            egui::Frame::new().fill(palette.surface)
+                .stroke(Stroke::new(1.0, palette.border))
+                .corner_radius(egui::CornerRadius::same(8))
+                .show(ui, |ui| {
                 ui.set_min_size(trace_rect.size());
                 ui.horizontal_wrapped(|ui| {
-                    ui.strong("FRAME TRACE");
+                    ui.label(egui::RichText::new("FRAME TRACE").size(14.0).strong().color(palette.text));
                     ui.separator();
                     self.trace_columns.menu(ui);
                     ui.add_space(10.0);
@@ -3596,11 +3635,16 @@ impl LogLensApp {
             }
 
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(inspector_rect), |ui| {
-                egui::Frame::new().fill(ui.visuals().faint_bg_color).show(ui, |ui| {
+                egui::Frame::new().fill(palette.surface)
+                .stroke(Stroke::new(1.0, palette.border))
+                .corner_radius(egui::CornerRadius::same(8))
+                .show(ui, |ui| {
                     ui.set_min_size(inspector_rect.size());
                     ui.horizontal_wrapped(|ui| {
                         ui.selectable_value(&mut self.inspector_pane, InspectorPane::Details, "Frame Inspector");
-                        ui.selectable_value(&mut self.inspector_pane, InspectorPane::Graphics, "Waveforms");
+                        if ui.button("Open Waveforms").on_hover_text("Open the full waveform viewer without replacing the frame details").clicked() {
+                            self.graphics_viewer_open = true;
+                        }
                         ui.separator();
                         if ui.selectable_label(self.inspector_dock == InspectorDock::Bottom, "Dock Bottom").clicked() { self.inspector_dock = InspectorDock::Bottom; }
                         if ui.selectable_label(self.inspector_dock == InspectorDock::Right, "Dock Right").clicked() { self.inspector_dock = InspectorDock::Right; }
@@ -3701,7 +3745,13 @@ impl LogLensApp {
                     cols[0].label(format!("Device flags: 0x{:04X} ({}); Data flags: 0x{:04X}",meta.device_flags,meta.device_flags_text(),meta.data_flags));
                 }
                 if let Some(crc)=f.network.can_crc {cols[0].label(format!("CAN CRC: 0x{crc:X}"));}
-                cols[0].label(format!("Raw entry: {}",f.raw_payload.iter().map(|b|format!("{b:02X}")).collect::<Vec<_>>().join(" ")));
+                // Keep the inspector readable for long Ethernet and analog payloads.
+                // Full payload remains available through Trace expansion and byte inspector.
+                let raw_preview = f.raw_payload.iter().take(24)
+                    .map(|b|format!("{b:02X}")).collect::<Vec<_>>().join(" ");
+                cols[0].label(format!("Raw entry ({} B): {}{}",
+                    f.raw_payload.len(), raw_preview,
+                    if f.raw_payload.len() > 24 { " …" } else { "" }));
                 cols[0].label(format!("Length: {}", f.payload.len()));
                 cols[1].strong("BYTE INSPECTOR");
                 egui::ScrollArea::vertical().max_height(190.0).show(&mut cols[1], |ui| {
@@ -5462,7 +5512,7 @@ impl LogLensApp {
 
     fn canoe_trace_table_virtual(&mut self, ui: &mut egui::Ui, d: &Dataset, visible_count: usize, channel_names: &BTreeMap<u32, String>) {
         let trace_render_started=Instant::now();
-        const ROW_H:f32=23.0;
+        const ROW_H:f32=28.0;
         let indices_len=visible_count.min(self.cached_scoped_indices.len());
 
         // Invalidate formatted rows only when the Trace scope changes.
@@ -5539,7 +5589,7 @@ impl LogLensApp {
     }
 
     fn canoe_trace_table(&mut self, ui: &mut egui::Ui, d: &Dataset, rows: &[TraceRow], channel_names: &BTreeMap<u32, String>) {
-        let row_h = 23.0;
+        let row_h = 28.0;
         if let Some(select_all)=trace_selection_command(ui) {
             self.clear_trace_selection();
             if select_all {
