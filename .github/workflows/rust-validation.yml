@@ -1,0 +1,41 @@
+name: LogLens Rust validation
+
+on:
+  push:
+    branches:
+      - chatgpt-ui-development
+    paths:
+      - "src/**"
+      - "vendor/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/rust-validation.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "vendor/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/rust-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loglens-rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-validation:
+    name: macOS Rust checks
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check all targets
+        run: cargo check --locked --all-targets
+      - name: Run tests
+        run: cargo test --locked
