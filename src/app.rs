@@ -5871,7 +5871,8 @@ impl LogLensApp {
     }
 
     fn configuration_workspace(&mut self, ui: &mut egui::Ui) {
-        let Some(_d) = self.dataset.clone() else { return; };
+        if self.dataset.is_none() { return; }
+        let palette = HomePalette::new(ui.visuals().dark_mode);
 
         let (title, description, import_kind) = match self.config_page {
             ConfigPage::Project => ("Project", "project.csv", "project"),
@@ -5881,15 +5882,17 @@ impl LogLensApp {
             ConfigPage::Events => ("CM Markers", "events.csv", "events"),
         };
 
-        // Configuration command bar: page identity on the left, edit actions on the right.
+        // Shared header and contextual controls: functions are executed only on click.
         egui::Frame::new()
-            .fill(ui.visuals().faint_bg_color)
-            .inner_margin(egui::Margin::symmetric(6, 3))
+            .fill(palette.surface)
+            .stroke(Stroke::new(1.0, palette.border))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(12, 9))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_sized([120.0, 32.0], egui::Label::new(egui::RichText::new("Configuration").strong().size(15.0)));
-                    ui.separator();
-                    ui.add_sized([100.0, 32.0], egui::Label::new(egui::RichText::new(title).strong()));
+                workspace_section_header(ui, "Configuration", "Editable engineering context and metadata");
+                ui.add_space(7.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(title).strong());
                     ui.weak(description);
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -5962,56 +5965,41 @@ impl LogLensApp {
                     });
                 });
             });
-        ui.add_space(3.0);
 
-        let available_h = ui.available_height();
-        ui.horizontal_top(|ui| {
-            // Flat navigator with compact aligned rows and useful counts.
-            ui.allocate_ui_with_layout(
-                egui::vec2(176.0, available_h),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    egui::Frame::new()
-                        .fill(ui.visuals().faint_bg_color)
-                        .inner_margin(egui::Margin::symmetric(6, 6))
-                        .show(ui, |ui| {
-                            ui.set_min_width(164.0);
-                            ui.small(egui::RichText::new("PROJECT DATA").strong());
-                            ui.add_space(5.0);
-                            for (page, label, count) in [
-                                (ConfigPage::Project, "Project", self.project_config.rows.len()),
-                                (ConfigPage::Channels, "Channels", self.channel_map.rows.len()),
-                                (ConfigPage::Messages, "Messages", self.vehicle_db.rows.len()),
-                                (ConfigPage::Signals, "Signals", self.signal_table.rows.len()),
-                                (ConfigPage::Events, "CM Markers", self.event_log.rows.len()),
-                            ] {
-                                ui.horizontal(|ui| {
-                                    if ui.add_sized([116.0, 30.0], egui::SelectableLabel::new(self.config_page == page, label)).clicked() {
-                                        if self.config_page==ConfigPage::Signals && page!=ConfigPage::Signals && self.signal_config_dirty {
-                                            self.apply_signal_configuration();
-                                        }
-                                        self.config_page = page;
-                                    }
-                                    ui.add_sized([40.0, 30.0], egui::Label::new(egui::RichText::new(count.to_string()).weak()));
-                                });
+        ui.add_space(7.0);
+        // Context tabs use the entire viewport; no fixed sidebar crowds the editable table.
+        egui::Frame::new()
+            .fill(palette.surface)
+            .stroke(Stroke::new(1.0, palette.border))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(10, 7))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for (page, label, count) in [
+                        (ConfigPage::Project, "Project", self.project_config.rows.len()),
+                        (ConfigPage::Channels, "Channels", self.channel_map.rows.len()),
+                        (ConfigPage::Messages, "Messages", self.vehicle_db.rows.len()),
+                        (ConfigPage::Signals, "Signals", self.signal_table.rows.len()),
+                        (ConfigPage::Events, "CM Markers", self.event_log.rows.len()),
+                    ] {
+                        if workspace_subtab(ui, self.config_page == page, &format!("{label} ({count})")) {
+                            if self.config_page == ConfigPage::Signals && page != ConfigPage::Signals && self.signal_config_dirty {
+                                self.apply_signal_configuration();
                             }
-                            ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(5.0);
-                            ui.small(egui::RichText::new("FORMAT").strong());
-                            ui.weak("CSV / Excel");
-                            ui.weak("User editable");
-                            ui.weak("Capture remains read-only");
-                        });
-                },
-            );
-
-            ui.add_space(3.0);
-            ui.separator();
-            ui.add_space(3.0);
-
+                            self.config_page = page;
+                        }
+                    }
+                });
+            });
+        ui.add_space(7.0);
+        egui::Frame::new()
+            .fill(palette.surface)
+            .stroke(Stroke::new(1.0, palette.border))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
             ui.vertical(|ui| {
-                ui.set_min_width((ui.available_width() - 2.0).max(560.0));
+                ui.set_min_width(ui.available_width().max(0.0));
                 // Small context row aligned with the editor, then the table fills the rest.
                 ui.horizontal(|ui| {
                     ui.strong(title);
@@ -6064,7 +6052,7 @@ impl LogLensApp {
                     }
                 }
             });
-        });
+            });
     }
 
 
