@@ -3338,16 +3338,17 @@ impl LogLensApp {
             style.visuals.faint_bg_color = palette.surface;
             style.visuals.extreme_bg_color = palette.backdrop;
         }
-        ui.painter().rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, palette.backdrop);
+        ui.painter().rect_filled(ui.max_rect(), egui::CornerRadius::same(0), palette.backdrop);
         // Historic sessions may have a docked Graphics placeholder. The approved
         // layout uses a Frame Inspector here and a dedicated Waveform Viewer instead.
         if self.inspector_pane == InspectorPane::Graphics {
             self.inspector_pane = InspectorPane::Details;
         }
-        if self.selected_trace_row.is_none() && !d.frames.is_empty() {
-            self.selected_trace_row = Some(0);
-        }
         self.ensure_filter_cache();
+        self.ensure_scope_cache();
+        if self.selected_trace_row.is_none() {
+            self.selected_trace_row = self.cached_scoped_indices.first().copied();
+        }
 
         self.capture_explorer_overview(ui, &d);
         self.measurement_toolbar(ui, &d);
