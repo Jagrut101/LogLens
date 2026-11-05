@@ -438,6 +438,36 @@ fn docked_pane_extent(available: f32, requested: f32, main_min: f32, pane_min: f
     requested.clamp(pane_min.min(maximum), maximum)
 }
 
+/// A single, lightweight desktop style shared by every LogLens workspace.
+fn configure_workspace_style(style: &mut egui::Style) {
+    style.spacing.button_padding = Vec2::new(10.0, 6.0);
+    style.spacing.interact_size.y = 30.0;
+    style.spacing.item_spacing = Vec2::new(8.0, 7.0);
+    style.spacing.window_margin = egui::Margin::same(12);
+    style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(14.0));
+    style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(13.0));
+    style.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(12.0));
+    style.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(12.0));
+    style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
+    style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
+    style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
+    style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
+}
+
+/// Shared compact header — no background dataset traversal or per-widget data copies.
+fn workspace_section_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new(title).size(18.0).strong());
+        ui.separator();
+        ui.label(egui::RichText::new(subtitle).weak());
+    });
+}
+
+/// A consistent accessible tab control; does not allocate new collections.
+fn workspace_subtab(ui: &mut egui::Ui, selected: bool, title: &str) -> bool {
+    ui.add(egui::Button::new(title).selected(selected).min_size(Vec2::new(96.0, 32.0))).clicked()
+}
+
 fn home_control_style(ui: &mut egui::Ui, p: HomePalette) {
     let style = ui.style_mut();
     style.spacing.item_spacing = Vec2::new(10.0, 9.0);
@@ -465,16 +495,9 @@ impl LogLensApp {
             AppTheme::Dark => egui::Visuals::dark(),
             AppTheme::Light => egui::Visuals::light(),
         });
-        // Slightly larger desktop controls improve readability and click targets across all workspaces.
+        // Apply the typography/spacing theme once, not during every redraw.
         let mut style = (*cc.egui_ctx.style()).clone();
-        style.spacing.button_padding = Vec2::new(5.0, 3.0);
-        style.spacing.interact_size.y = 24.0;
-        style.spacing.item_spacing = Vec2::new(7.0, 6.0);
-        style.spacing.window_margin = egui::Margin::same(10);
-        style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(5);
-        style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(5);
-        style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(5);
-        style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(5);
+        configure_workspace_style(&mut style);
         cc.egui_ctx.set_style(style);
         let mut app=Self::initial_state();
         app.theme=theme;
@@ -2366,115 +2389,80 @@ impl LogLensApp {
     }
 
     fn workspace_tabs(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::horizontal().id_salt("workspace_navigation_r5").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if ui.add_sized([86.0, 35.0], egui::Button::new("Home"))
-                    .on_hover_text("Return to Home without unloading the active capture").clicked() {
-                    self.refresh_sessions();
-                    self.show_start_page = true;
-                }
-                if ui.add_enabled(self.can_change_channels(), egui::Button::new("Change Channels"))
-                    .on_hover_text("Choose a different set of capture channels").clicked() {
-                    self.change_capture_channels();
-                }
-                ui.separator();
-                if ui.add_sized([166.0, 35.0], egui::SelectableLabel::new(
-                        self.workspace == Workspace::Measurement,
-                        egui::RichText::new("Capture Explorer").size(14.0)))
-                    .on_hover_text("Networks, frame trace, replay and inspector").clicked() {
-                    self.workspace = Workspace::Measurement;
-                }
-                if ui.add_sized([132.0, 35.0], egui::SelectableLabel::new(
-                        self.workspace == Workspace::Analysis,
-                        egui::RichText::new("Signal Analysis").size(14.0)))
-                    .on_hover_text("Byte activity, signal discovery, timing and CRC").clicked() {
-                    self.workspace = Workspace::Analysis;
-                }
-                if ui.add_sized([136.0, 35.0], egui::SelectableLabel::new(
-                        self.workspace == Workspace::Configuration,
-                        egui::RichText::new("Configuration").size(14.0)))
-                    .on_hover_text("Project, Channels, Messages, Signals and Events").clicked() {
-                    self.workspace = Workspace::Configuration;
-                }
-                ui.separator();
-                if ui.add_sized([116.0, 35.0], egui::Button::new("Waveforms"))
-                    .on_hover_text("Open the dedicated Waveform Viewer using the current capture").clicked() {
-                    self.workspace = Workspace::Measurement;
-                    self.inspector_pane = InspectorPane::Graphics;
-                    self.floating_panes.remove(&InspectorPane::Graphics);
-                    self.graphics_viewer_open = true;
-                }
-                if ui.add_sized([86.0, 35.0], egui::Button::new("Export"))
-                    .on_hover_text("Open Export Manager").clicked() {
-                    self.show_export_manager = true;
-                }
+        let palette = HomePalette::new(ui.visuals().dark_mode);
+        egui::Frame::new()
+            .fill(palette.surface)
+            .stroke(Stroke::new(1.0, palette.border))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Home").on_hover_text("Return to Home without unloading the capture").clicked() {
+                        self.refresh_sessions();
+                        self.show_start_page = true;
+                    }
+                    if ui.add_enabled(self.can_change_channels(),
+                        egui::Button::new("Channels")).on_hover_text("Change capture channels").clicked() {
+                        self.change_capture_channels();
+                    }
+                    ui.separator();
+                    if workspace_subtab(ui, self.workspace == Workspace::Measurement, "Capture Explorer") {
+                        self.workspace = Workspace::Measurement;
+                    }
+                    if workspace_subtab(ui, self.workspace == Workspace::Analysis, "Signal Analysis") {
+                        self.workspace = Workspace::Analysis;
+                    }
+                    if workspace_subtab(ui, self.workspace == Workspace::Configuration, "Configuration") {
+                        self.workspace = Workspace::Configuration;
+                    }
+                    ui.separator();
+                    if ui.button("Waveforms").clicked() {
+                        self.workspace = Workspace::Measurement;
+                        self.graphics_viewer_open = true;
+                    }
+                    if ui.button("Export").clicked() {
+                        self.show_export_manager = true;
+                    }
+                });
             });
-        });
-        ui.add_space(6.0);
+        ui.add_space(7.0);
     }
 
     /// Capture overview uses only the existing load-time index, not per-frame scans.
     fn capture_explorer_overview(&mut self, ui: &mut egui::Ui, d: &Dataset) {
         let palette = HomePalette::new(ui.visuals().dark_mode);
-        let channel_count = d.index.project_channel_keys.len();
-        let frame_count = d.frames.len();
-        let key_count = d.index.by_key.len();
-        let duration = self.cached_stats.as_ref().map(|stats| stats.duration_s)
+        // All numbers are O(1) from indexes/statistics built while loading the capture.
+        let duration = self.cached_stats.as_ref().map(|s| s.duration_s)
             .unwrap_or_else(|| d.frames.last().map(|f| f.relative_time_s).unwrap_or(0.0));
-        if let Some(warning) = d.warnings.iter().find(|w| w.starts_with("Safe load limit reached")) {
-            egui::Frame::new().fill(ui.visuals().faint_bg_color)
-                .stroke(Stroke::new(1.0, Color32::from_rgb(211, 147, 45)))
-                .corner_radius(egui::CornerRadius::same(8))
-                .inner_margin(egui::Margin::symmetric(12, 9))
-                .show(ui, |ui| {
+        egui::Frame::new().fill(palette.surface)
+            .stroke(Stroke::new(1.0, palette.border))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::symmetric(14, 8))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new("Capture Explorer").size(17.0).strong().color(palette.text));
+                    ui.separator();
+                    ui.label(egui::RichText::new(format!("{} frames", d.frames.len())).color(palette.muted));
+                    ui.label(egui::RichText::new(format!("{} channels", d.index.project_channel_keys.len())).color(palette.muted));
+                    ui.label(egui::RichText::new(format!("{} frame IDs", d.index.by_key.len())).color(palette.muted));
+                    ui.label(egui::RichText::new(format!("{duration:.3} s")).color(palette.muted));
+                    if !self.show_network_tree && ui.small_button("Show Channels").clicked() {
+                        self.show_network_tree = true;
+                    }
+                });
+                if let Some(warning) = d.warnings.iter().find(|w| w.starts_with("Safe load limit reached")) {
+                    ui.add_space(4.0);
                     ui.horizontal_wrapped(|ui| {
-                        ui.label(egui::RichText::new("PARTIAL CAPTURE").strong().color(Color32::from_rgb(220, 153, 46)));
-                        ui.label(warning);
+                        ui.label(egui::RichText::new("PARTIAL CAPTURE").strong().color(Color32::YELLOW));
+                        ui.label(egui::RichText::new(warning).small());
                         if ui.add_enabled(self.background_load.is_none(),
                             egui::Button::new("Reload selected channels")).clicked() {
                             self.reload_selected_channels();
                         }
                     });
-                });
-            ui.add_space(6.0);
-        }
-        egui::Frame::new().fill(palette.hero)
-            .stroke(Stroke::new(1.0, palette.hero_border))
-            .corner_radius(egui::CornerRadius::same(10))
-            .inner_margin(egui::Margin::symmetric(18, 14))
-            .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("WORKFLOW / STEP 03").size(10.0).strong().color(palette.accent));
-                        ui.label(egui::RichText::new("Capture Explorer & Analysis Workspace").size(22.0).strong().color(palette.text));
-                        ui.label(egui::RichText::new("Browse networks, inspect frames, replay events and open waveforms.")
-                            .size(13.0).color(palette.muted));
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Show Explorer").on_hover_text("Reveal the protocol/channel tree").clicked() {
-                            self.show_network_tree = true;
-                        }
-                    });
-                });
-                ui.add_space(8.0);
-                ui.separator();
-                ui.horizontal_wrapped(|ui| {
-                    let stats = [
-                        ("CAPTURE FRAMES", format!("{frame_count}")),
-                        ("CHANNELS", channel_count.to_string()),
-                        ("FRAME IDs / KEYS", key_count.to_string()),
-                        ("DURATION", format!("{duration:.3} s")),
-                    ];
-                    for (label, value) in stats {
-                        ui.vertical(|ui| {
-                            ui.label(egui::RichText::new(label).size(10.0).color(palette.muted));
-                            ui.label(egui::RichText::new(value).size(19.0).strong().color(palette.text));
-                        });
-                        ui.add_space(24.0);
-                    }
-                });
+                }
             });
-        ui.add_space(6.0);
+        ui.add_space(5.0);
     }
 
     fn ensure_filter_cache(&mut self) {
@@ -3265,27 +3253,33 @@ impl LogLensApp {
                     ui.separator();
                     ui.add_space(4.0);
 
-                    if ui.add_sized([104.0, 34.0], egui::SelectableLabel::new(self.workspace == Workspace::Measurement && self.show_network_tree, "Explorer")).on_hover_text("Show the searchable Capture Explorer").clicked() {
-                        self.show_network_tree = true;
-                        self.workspace = Workspace::Measurement;
-                    }
-                    let graphics_active = self.graphics_viewer_open
-                        || self.floating_panes.contains(&InspectorPane::Graphics);
-                    if ui.add_sized([100.0, 34.0], egui::SelectableLabel::new(graphics_active, "Graphics"))
-                        .on_hover_text("Open the dedicated waveform viewer; keep Frame Inspector docked").clicked() {
-                        self.workspace = Workspace::Measurement;
-                        self.inspector_pane = InspectorPane::Details;
+                    ui.menu_button("Panels", |ui| {
+                        if ui.button(if self.show_network_tree { "Hide Channel Explorer" } else { "Show Channel Explorer" }).clicked() {
+                            self.show_network_tree = !self.show_network_tree;
+                            ui.close();
+                        }
+                        if ui.button("Maximize Frame Trace").clicked() {
+                            self.inspector_pane = InspectorPane::None;
+                            ui.close();
+                        }
+                        if ui.button("Show Frame Inspector").clicked() {
+                            self.inspector_pane = InspectorPane::Details;
+                            ui.close();
+                        }
+                        if ui.button("Dock Inspector Bottom").clicked() {
+                            self.inspector_dock = InspectorDock::Bottom;
+                            self.inspector_pane = InspectorPane::Details;
+                            ui.close();
+                        }
+                        if ui.button("Dock Inspector Right").clicked() {
+                            self.inspector_dock = InspectorDock::Right;
+                            self.inspector_pane = InspectorPane::Details;
+                            ui.close();
+                        }
+                    });
+                    if ui.add_sized([110.0, 34.0], egui::Button::new("Waveforms"))
+                        .on_hover_text("Open the dedicated viewer with independent A/B cursors").clicked() {
                         self.graphics_viewer_open = true;
-                    }
-                    if ui.add_sized([96.0, 34.0], egui::SelectableLabel::new(self.workspace == Workspace::Measurement && self.inspector_pane == InspectorPane::None, "Trace")).on_hover_text("Maximize Frame Trace").clicked() {
-                        self.workspace = Workspace::Measurement;
-                        self.inspector_pane = InspectorPane::None;
-                    }
-                    if ui.add_sized([110.0, 34.0], egui::SelectableLabel::new(
-                        self.workspace == Workspace::Measurement && self.inspector_pane == InspectorPane::Details, "Inspector"))
-                        .on_hover_text("Inspect the selected frame and payload bytes").clicked() {
-                        self.workspace = Workspace::Measurement;
-                        self.inspector_pane = InspectorPane::Details;
                     }
                 });
                 });
@@ -3324,20 +3318,7 @@ impl LogLensApp {
     fn canoe_workspace(&mut self, ui: &mut egui::Ui) {
         let Some(d) = self.dataset.clone() else { return; };
         let palette = HomePalette::new(ui.visuals().dark_mode);
-        // Page 3 only: use the same legible type, spacing and dark surfaces as the approved preview.
-        // This local UI style deliberately leaves Home and Channel Selection unchanged.
-        {
-            let style = ui.style_mut();
-            style.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(14.0));
-            style.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(13.0));
-            style.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(12.0));
-            style.text_styles.insert(egui::TextStyle::Monospace, egui::FontId::monospace(12.0));
-            style.spacing.item_spacing = Vec2::new(8.0, 7.0);
-            style.spacing.button_padding = Vec2::new(11.0, 7.0);
-            style.spacing.interact_size.y = 29.0;
-            style.visuals.faint_bg_color = palette.surface;
-            style.visuals.extreme_bg_color = palette.backdrop;
-        }
+        // Shared theme was configured once at startup; paint only visible panels.
         ui.painter().rect_filled(ui.max_rect(), egui::CornerRadius::same(0), palette.backdrop);
         // Historic sessions may have a docked Graphics placeholder. The approved
         // layout uses a Frame Inspector here and a dedicated Waveform Viewer instead.
