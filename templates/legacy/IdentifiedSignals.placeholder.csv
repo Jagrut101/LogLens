@@ -1,0 +1,3 @@
+name,ecu,can_id,channel_id,byte_start,bit_start,bit_length,endian,signed,scale,offset,meaning,confidence
+BrakePedalCandidate,ABS_ESC,0x220,CAN1,0,0,1,little,false,1.0,0.0,Candidate CAN brake pedal state,Low
+LinSwitchCandidate,Body Controller,0x22,LIN1,0,0,1,little,false,1.0,0.0,Candidate LIN switch state,Low

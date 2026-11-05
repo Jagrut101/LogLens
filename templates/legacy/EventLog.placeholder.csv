@@ -1,0 +1,2 @@
+name,start_time_s,end_time_s,baseline_start_time_s,baseline_end_time_s,description,ecu_sensor,ecu_logical_control,ecu_actuator
+Example controlled event,1.0,4.0,0.0,0.9,"Bus-neutral window for CAN, CAN-FD, LIN, and Ethernet frames",Sensor ECU,Logical Control ECU,Actuator ECU

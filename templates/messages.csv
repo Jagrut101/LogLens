@@ -1,0 +1,5 @@
+protocol,channel_id,message_id,message_name,dlc,cycle_ms,source,destination,description
+CAN,1,0x123,Vehicle_Status,8,10,VCU,BCM,Vehicle status frame
+CAN_FD,2,0x456,Body_Status,16,20,BCM,GW,Body status frame
+LIN,3,0x22,Door_Status,8,20,DDM,BCM,Driver door status
+SOMEIP,4,0x12340001,VehicleState,,,VCU,GW,Vehicle state service message

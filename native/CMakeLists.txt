@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.16)
+project(loglens_native LANGUAGES CXX)
+add_library(loglens_native STATIC src/loglens_engine.cpp)
+target_include_directories(loglens_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(loglens_native PUBLIC cxx_std_17)
+if(MSVC)
+  target_compile_options(loglens_native PRIVATE /O2)
+else()
+  target_compile_options(loglens_native PRIVATE -O3)
+endif()
+
+add_executable(loglens_native_benchmark benchmark.cpp)
+target_link_libraries(loglens_native_benchmark PRIVATE loglens_native)

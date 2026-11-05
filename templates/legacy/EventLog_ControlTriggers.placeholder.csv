@@ -1,0 +1,4 @@
+Sr No,Test Case,Event Name,Description
+1,TC_001,Driver Door Open,Event bounded by adjacent TECMP 0x00 Control Messages
+2,TC_002,Ignition On,Next event bounded by next adjacent Control Message pair
+3,TC_003,Vehicle Start,Event names follow EventLog row order

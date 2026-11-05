@@ -1,0 +1,6 @@
+key,value
+project_name,Vehicle_A
+capture_file,test01.pcapng
+timestamp_source,Capture
+default_replay_speed,1.0
+hide_static_frames,true

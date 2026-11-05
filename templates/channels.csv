@@ -1,0 +1,6 @@
+channel_id,name,protocol,bitrate,description
+1,Chassis_CAN,CAN,500000,Chassis network
+2,Body_CAN,CAN_FD,500000,Body CAN FD network
+3,DriverDoor_LIN,LIN,19200,Driver door network
+4,Vehicle_ETH,ETHERNET,,Ethernet backbone
+5,Analog_1,ANALOG,,Sensor inputs

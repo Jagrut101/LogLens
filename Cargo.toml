@@ -1,0 +1,33 @@
+[package]
+name = "loglens-replica"
+version = "0.54.42"
+edition = "2021"
+description = "CANoe-style Rust automotive log workspace with readable absolute timestamps, synchronized waveform navigation and offline replay"
+
+[dependencies]
+ab_glyph = "0.2"
+tiny-skia = "0.11"
+anyhow = "1"
+tempfile = "3"
+eframe = "=0.33.3"
+rfd = "0.15"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+csv = "1"
+rust_xlsxwriter = "0.90"
+calamine = "0.31"
+uuid = { version = "1", features = ["v4", "serde"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+panic = "unwind"
+
+[build-dependencies]
+cc = "1"
+
+[patch.crates-io]
+eframe = { path = "vendor/eframe" }

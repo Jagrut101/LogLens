@@ -1,0 +1,46 @@
+channel_id,ecu,frame_name,can_id,direction,signal_name,byte_start,bit_start,bit_length,endian,signed,scale,offset,meaning,confidence
+25611,Sensor ECU,BrakePedalFrame,0x100,tx,,,,,,,,,,
+25612,Logical Control ECU,BrakeControlFrame,0x200,tx,,,,,,,,,,
+25613,Body Controller,BodyStatusFrame,0x22,tx,,,,,,,,,,
+25614,Ethernet ECU,VehicleEthernetFlow,0x0800,tx,,,,,,,,,,
+25610,Ethernet ECU,VehicleEthernetFlow,0x0800,tx,,,,,,,,,,
+25610,,,0x150,,PRNDL Request,2,7,4,little,false,1.0,0.0,Candidate CAN brake pedal state,Low
+25610,HL Left,,0x150,,PRNDL Current Status,2,3,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25610,HL Right,,0x152,,EPB Request,6,1,2,little,false,1.0,0.0,Candidate LIN switch state,Low
+25610,,,0x208,,Brake Pedal Pressure,4,6,15,little,false,1.0,0.0,Candidate LIN switch state,Low
+25610,,,0x32b,,EPB Force,3,7,16,little,false,1.0,0.0,Candidate LIN switch state,Low
+25610,,,0x32b,,EPB Actuator Status,6,3,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25610,ZCUF_R,,0x32b,,EPB Status,5,7,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25610,ZCUF_L,,0x32b,,EPB Lamp Status?,6,7,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25610,TSM_L,,0x38e, ,Brake Pedal Position,4,7,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25610,TSM_R,,0x38e,,Motor Pump Speed,2,7,12,little,false,1.0,0.0,Candidate LIN switch state,Low
+25610,DTRL,,0x38e,,Motor Pump Speed,4,7,12,little,false,1.0,0.0,Candidate LIN switch state,Low
+25610,,,0x38f,,Brake Pedal Status,2,7,1,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x194,,Rear_DRL_Light_Cmd,2,7,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x196,,Rear_Indicator_Cmd_L,2,3,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x196,,Rear_ParkingLight_Cmd_L,2,7,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x197,,Rear_Indicator_Cmd_R,2,4,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x197,,Rear_ParkingLight_Cmd_R,2,7,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x543,,Reverse lamp status,1,4,3,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x5c2,,Rear_DRL_Light_Status,2,7,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x5c4,,Rear_Left_Indicator_Status,2,7,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x5c4,,Rear_ParkingLight_Status_L,2,3,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x5c5,,Rear_Right_Indicator_Status,2,7,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x5c5,,Rear_ParkingLight_Status_R,2,3,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25612,,,0x041,,CCSM_LHStalkTSL_Req,3,7,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25614,,,0x1f6,,Front_DRL_stadium lights_Status_L,2,3,1,little,false,1.0,0.0,Candidate LIN switch state,Low
+25614,,,0x1f7,,Front_DRL_stadium lights_Status_R,2,3,1,little,false,1.0,0.0,Candidate LIN switch state,Low
+25614,,,0x1f5,,Front_DRL_Light bar_Status_R,2,3,1,little,false,1.0,0.0,Candidate LIN switch state,Low
+25614,,,0x1f4,,Front_DRL_Light bar_Status_L,2,3,1,little,false,1.0,0.0,Candidate LIN switch state,Low
+25614,,,0x1fc,,ParkingLight_Cmd,1,7,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25614,,,0x30a,,Front_Right_Indicator_Command,2,4,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25614,,,0x309,,Front_Left_Indicator_Command,2,3,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25614,,,0x30b,,Front_Left_Indicator_Status,2,4,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25614,,,0x30c,,Front_Right_Indicator_Status,2,4,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25614,,,0x62a,,"ParkingLight_Sts
+",2,7,2,little,false,1.0,0.0,Candidate LIN switch state,Low
+25613,,,0x240,,Cntrl_LockUnlock_Sts​,,,,little,false,1.0,0.0,Candidate LIN switch state,Low
+25613,,,0x241,,Vehicle_Ignition_HV_State,3,4,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25611,,,0x5d6,,Rear Charging Indication (Multiple nibbles for multiple LED indication),,,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25614,,,0x5c7,,Front Charging Indication (Multiple nibbles for multiple LED indication),,,4,little,false,1.0,0.0,Candidate LIN switch state,Low
+25610,,,0x390,,EPAS_StrAngle,5,0,16,little,false,1.0,0.0,Candidate LIN switch state,Low

@@ -1,0 +1,4 @@
+protocol,channel_id,message_id,signal_name,byte_position,bit_position,length,endian,data_type,signed,factor,offset,unit,description
+CAN,1,0x123,VehicleSpeed,0,0,16,Intel / Little Endian,Unsigned Integer,false,0.01,0,km/h,Vehicle speed
+CAN,1,0x123,GearPosition,2,0,4,Intel / Little Endian,Unsigned Integer,false,1,0,,Current gear
+LIN,3,0x22,DoorOpen,0,0,1,Intel / Little Endian,Unsigned Integer,false,1,0,,Driver door open state

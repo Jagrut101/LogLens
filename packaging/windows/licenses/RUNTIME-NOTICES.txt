@@ -1,0 +1,5 @@
+Included runtime libraries: libstdc++-6.dll, libgcc_s_seh-1.dll and libwinpthread-1.dll, built by the MinGW-w64 Homebrew toolchain.
+GCC runtime libraries are accompanied by GPL-3.0.txt and GCC-Runtime-Exception-3.1.txt.
+Winpthreads notices are provided in Winpthreads-COPYING.txt.
+MinGW-w64 general notices are provided in MinGW-w64-COPYING.txt.
+Source references: https://gcc.gnu.org/ and https://github.com/mingw-w64/mingw-w64
