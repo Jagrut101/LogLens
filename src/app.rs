@@ -4156,9 +4156,10 @@ impl LogLensApp {
         let capture_first_ns = d.frames.first().map(|f| f.timestamp_ns).unwrap_or(0);
         let capture_last_ns = d.frames.last().map(|f| f.timestamp_ns).unwrap_or(capture_first_ns);
         // v0.38.1: compact Graphics header. Secondary controls are in the overflow menu.
-        ui.horizontal(|ui| {
-            ui.strong("GRAPHICS"); ui.separator();
-            if ui.small_button("Close viewer").clicked() {self.graphics_viewer_open=false;}
+        // Primary chart actions stay visible; advanced filters live in View/Options.
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("WAVEFORMS").size(17.0).strong()); ui.separator();
+            if ui.button("Close").clicked() {self.graphics_viewer_open=false;}
 
             if ui.add_enabled(self.can_change_channels(),egui::Button::new("Change Channels")).clicked(){self.change_capture_channels();}
             ui.menu_button("Replay",|ui| {
@@ -4172,19 +4173,30 @@ impl LogLensApp {
             if ui.small_button("-").on_hover_text("Zoom out").clicked(){let c=(self.graphics_view_start_s+self.graphics_view_end_s)*0.5;zoom_time_view(&mut self.graphics_view_start_s,&mut self.graphics_view_end_s,1.38,c,0.0,full_end);}
             if ui.small_button("+").on_hover_text("Zoom in").clicked(){let c=(self.graphics_view_start_s+self.graphics_view_end_s)*0.5;zoom_time_view(&mut self.graphics_view_start_s,&mut self.graphics_view_end_s,0.72,c,0.0,full_end);}
             ui.separator();
-            ui.checkbox(&mut self.graphics_follow_replay,"Follow");
-            let control_count=d.index.by_key.iter().filter(|(key,_)|key.starts_with("TECMP:CONTROL:"))
-                .map(|(_,indices)|indices.len()).sum::<usize>();
-            ui.checkbox(&mut self.graphics_show_event_markers,format!("CM Markers ({control_count})"))
-                .on_hover_text("Show each TECMP Control Message as a vertical timestamp marker. Control messages are retained alongside selected channels.");
-            let before_raw = self.show_raw_ids;
-            ui.toggle_value(&mut self.show_raw_ids, "Raw IDs")
-                .on_hover_text("ON: ConfiguredName (RawID). OFF: ConfiguredName only. Unconfigured IDs remain visible.");
-            if before_raw != self.show_raw_ids {
-                self.trace_view_cache.clear();
-                self.persist_session_configuration();
-            }
-            if ui.add(egui::Button::new(if self.graphics_show_signal_browser{"Signals <"}else{"Signals >"}))
+            ui.menu_button("View", |ui| {
+                ui.checkbox(&mut self.graphics_follow_replay, "Follow replay")
+                    .on_hover_text("Keep waveform time window tracking replay");
+                let control_count=d.index.by_key.iter().filter(|(key,_)|key.starts_with("TECMP:CONTROL:"))
+                    .map(|(_,indices)|indices.len()).sum::<usize>();
+                ui.checkbox(&mut self.graphics_show_event_markers,format!("CM Markers ({control_count})"));
+                let before_raw = self.show_raw_ids;
+                ui.checkbox(&mut self.show_raw_ids, "Show raw IDs");
+                if before_raw != self.show_raw_ids {
+                    self.trace_view_cache.clear();
+                    self.persist_session_configuration();
+                }
+                ui.separator();
+                ui.checkbox(&mut self.graphics_hide_constant, "Hide constant bytes")
+                    .on_hover_text("Hide static byte lanes in the selected analysis range");
+                ui.checkbox(&mut self.graphics_hide_repetitive, "Hide repetitive patterns")
+                    .on_hover_text("Hide periodic byte lanes in the selected analysis range");
+                ui.separator();
+                if ui.button("Graph settings").clicked() {
+                    self.show_graph_settings = !self.show_graph_settings;
+                    ui.close();
+                }
+            });
+            if ui.add(egui::Button::new(if self.graphics_show_signal_browser{"Hide Sources"}else{"Show Sources"}))
                 .on_hover_text("Show/hide the source browser to maximize waveform space").clicked(){
                 self.graphics_show_signal_browser=!self.graphics_show_signal_browser;
             }
@@ -4200,11 +4212,7 @@ impl LogLensApp {
                 self.graphics_range_last_pointer_s=None;
             }
 
-            ui.toggle_value(&mut self.graphics_hide_constant,"Hide Constant")
-                .on_hover_text("Hide STATIC bytes in the active Analysis Range. If every byte of a frame is STATIC, hide the complete frame. A/B cursors do not affect this filter.");
-            ui.toggle_value(&mut self.graphics_hide_repetitive,"Hide Repetitive")
-                .on_hover_text("Hide bytes with a stable short-period repeating pattern in the committed Analysis Range. Requires at least 3 complete cycles; A/B cursors do not affect this filter.");
-            if ui.button("Settings").on_hover_text("Graph appearance, cursors, scale and layout").clicked(){self.show_graph_settings=!self.show_graph_settings;}
+            // Advanced display filters and settings are in the View menu above.
             ui.menu_button("Options",|ui|{
                 let selected=!self.graphics_sources.is_empty() || !self.graphics_signals.is_empty() || !self.graphics_bits.is_empty() || !self.graphics_whole_frames.is_empty();
                 if ui.add_enabled(selected,egui::Button::new("Save graph image…"))
@@ -4237,7 +4245,14 @@ impl LogLensApp {
         self.analog_timeline_notice(ui,d);
         let loaded_end=self.cached_stats.as_ref().map(|s|s.duration_s).unwrap_or_else(||d.frames.last().map(|f|f.relative_time_s).unwrap_or(0.0));
         let completeness=if d.warnings.iter().any(|w|w.starts_with("Safe load limit reached")){"Partial"}else{"Complete selected scope"};
-        ui.small(format!("{completeness}: {} records · loaded 0.000–{loaded_end:.3} s · view {:.3}–{:.3} s",d.frames.len(),self.graphics_view_start_s,self.graphics_view_end_s));
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(format!("{completeness} · {} loaded frames",d.frames.len())).weak());
+            ui.separator();
+            ui.label(egui::RichText::new(format!("View {:.3}–{:.3} s",self.graphics_view_start_s,self.graphics_view_end_s)).weak());
+            ui.separator();
+            ui.label(egui::RichText::new(format!("{} sources · {} signals",self.graphics_sources.len(),self.graphics_signals.len())).weak());
+            ui.label(egui::RichText::new(format!("Capture {:.3} s",loaded_end)).weak());
+        });
         ui.horizontal(|ui|{
             ui.small(if d.source_time{"TECMP source time"}else{"Wireshark capture time"});
             ui.separator();
