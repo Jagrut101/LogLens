@@ -16,7 +16,7 @@ use crate::{
     session::{self, AppPreferences, AppTheme, SessionMeta, WorkspaceSnapshot},
 };
 use eframe::egui::{self, Color32, Pos2, Sense, Stroke, Vec2};
-use std::{collections::{BTreeMap, BTreeSet, HashMap, VecDeque}, path::PathBuf, sync::{Arc, mpsc::{self, Receiver}}, thread, panic::{self, AssertUnwindSafe}, time::{Duration, Instant}};
+use std::{collections::{BTreeMap, BTreeSet, HashMap, VecDeque}, hash::{Hash, Hasher}, path::PathBuf, sync::{Arc, mpsc::{self, Receiver}}, thread, panic::{self, AssertUnwindSafe}, time::{Duration, Instant}};
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum Workspace { Measurement, Analysis, Configuration }
@@ -42,6 +42,16 @@ enum ExportRange { CursorAB, Visible, Full }
 enum ExportContent { CurrentSelection, SelectedChannels, AllData }
 #[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum ExportFormat { Excel, Csv, Pcapng }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ExportPreviewSummary {
+    signature: u64,
+    frames: usize,
+    signals: usize,
+    mapped_signals: usize,
+    mapped_samples: usize,
+    skipped_constant: usize,
+}
 
 #[derive(Clone)]
 struct ToolLogEntry {
@@ -360,6 +370,7 @@ pub struct LogLensApp {
     export_content: ExportContent,
     export_format: ExportFormat,
     export_skip_constant_frames: bool,
+    export_preview_summary: Option<ExportPreviewSummary>,
     // v0.54.0: debounced persistent per-log workspace state.
     workspace_cache_signature: String,
     workspace_cache_last_save: Instant,
@@ -718,6 +729,7 @@ impl LogLensApp {
             export_content: ExportContent::CurrentSelection,
             export_format: ExportFormat::Excel,
             export_skip_constant_frames: false,
+            export_preview_summary: None,
             workspace_cache_signature: String::new(),
             workspace_cache_last_save: Instant::now(),
         }
@@ -5665,138 +5677,229 @@ impl LogLensApp {
         s.into_iter().collect()
     }
 
-    fn export_manager(&mut self, ctx:&egui::Context) {
+    // This tiny signature does not touch the capture frame vector. It invalidates
+    // an existing summary when the user changes export scope or time range.
+    fn export_preview_key(&self, d: &Dataset, start: f64, end: f64) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (self.export_range as u8).hash(&mut h);
+        (self.export_content as u8).hash(&mut h);
+        self.export_skip_constant_frames.hash(&mut h);
+        start.to_bits().hash(&mut h);
+        end.to_bits().hash(&mut h);
+        d.frames.len().hash(&mut h);
+        d.frames.first().map(|f| f.timestamp_ns).hash(&mut h);
+        d.frames.last().map(|f| f.timestamp_ns).hash(&mut h);
+        for key in &self.project_channels { key.hash(&mut h); }
+        for key in &self.graphics_sources { key.hash(&mut h); }
+        for key in &self.graphics_signals { key.hash(&mut h); }
+        self.signals.len().hash(&mut h);
+        h.finish()
+    }
+
+    fn export_selected_signals(&self) -> Vec<SignalDefinition> {
+        self.signals.iter().filter(|sig| match self.export_content {
+            ExportContent::CurrentSelection => self.graphics_signals.contains(&sig.name),
+            ExportContent::SelectedChannels | ExportContent::AllData => true,
+        }).cloned().collect()
+    }
+
+    // Build export rows only for an explicit Preview or Export user action.
+    // Previously the export window scanned millions of frames on every repaint.
+    fn export_selected_rows<'a>(&self, d: &'a Dataset, a: f64, b: f64)
+        -> (Vec<&'a crate::model::NormalizedFrame>, usize)
+    {
+        let mut rows = d.frames.iter()
+            .filter(|f| f.relative_time_s >= a && f.relative_time_s <= b)
+            .filter(|f| match self.export_content {
+                ExportContent::AllData => true,
+                ExportContent::SelectedChannels => self.project_channels
+                    .contains(&project_channel_key(&f.bus_type.to_string(), f.channel_id)),
+                ExportContent::CurrentSelection => export_frame_selected(
+                    f, &self.graphics_sources, &self.graphics_signals, &self.signals),
+            }).collect::<Vec<_>>();
+        let before_skip = rows.len();
+        if self.export_skip_constant_frames {
+            let mut source_state = BTreeMap::<String, (Vec<u8>, bool)>::new();
+            for f in &rows {
+                if f.bus_type == BusType::Analog { continue; }
+                let key = format!("{}|{}|{}", f.bus_type, f.channel_id, f.frame_key);
+                match source_state.get_mut(&key) {
+                    Some((first, changed)) => {
+                        if !*changed && *first != f.payload { *changed = true; }
+                    }
+                    None => { source_state.insert(key, (f.payload.clone(), false)); }
+                }
+            }
+            let constant = source_state.into_iter()
+                .filter_map(|(key, (_, changed))| if changed { None } else { Some(key) })
+                .collect::<BTreeSet<_>>();
+            rows.retain(|f| {
+                f.bus_type == BusType::Analog ||
+                    !constant.contains(&format!("{}|{}|{}", f.bus_type, f.channel_id, f.frame_key))
+            });
+        }
+        let skipped = before_skip.saturating_sub(rows.len());
+        (rows, skipped)
+    }
+
+    fn export_manager(&mut self, ctx: &egui::Context) {
         if !self.show_export_manager { return; }
-        let Some(d)=self.dataset.clone() else {
-            self.show_export_manager=false;
+        let Some(d) = self.dataset.clone() else {
+            self.show_export_manager = false;
             return;
         };
-
-        // Native detached viewport: same architecture used by the Graphics window.
-        let viewport_id=egui::ViewportId::from_hash_of("native_export_manager");
-        let builder=egui::ViewportBuilder::default()
-            .with_title("LogLens - Export")
-            .with_inner_size(Vec2::new(760.0, 620.0))
-            .with_min_inner_size(Vec2::new(560.0, 420.0))
+        let palette = HomePalette::new(ctx.style().visuals.dark_mode);
+        let viewport_id = egui::ViewportId::from_hash_of("native_export_manager");
+        let builder = egui::ViewportBuilder::default()
+            .with_title("LogLens - Export Manager")
+            .with_inner_size(Vec2::new(780.0, 590.0))
+            .with_min_inner_size(Vec2::new(520.0, 400.0))
             .with_resizable(true);
-
-        let mut close_request=false;
-        ctx.show_viewport_immediate(viewport_id,builder,|ctx,_class|{
-            egui::CentralPanel::default().show(ctx,|ui|{
-
-            ui.heading("Export preview");
-            ui.separator();
-            ui.strong("Range");
-            ui.horizontal(|ui|{
-                ui.radio_value(&mut self.export_range,ExportRange::CursorAB,"Cursor A → B");
-                ui.radio_value(&mut self.export_range,ExportRange::Visible,"Visible range");
-                ui.radio_value(&mut self.export_range,ExportRange::Full,"Full recording");
-            });
-            let full_end=d.frames.last().map(|f|f.relative_time_s).unwrap_or(0.0);
-            let (a,b)=match self.export_range{
-                ExportRange::CursorAB=>(self.cursor_a_s.min(self.cursor_b_s),self.cursor_a_s.max(self.cursor_b_s)),
-                ExportRange::Visible=>(self.graphics_view_start_s,self.graphics_view_end_s),
-                ExportRange::Full=>(0.0,full_end),
-            };
-            ui.monospace(format!("{:.6} s → {:.6} s   Δ {:.6} s",a,b,(b-a).max(0.0)));
-            ui.separator();ui.strong("Content");
-            ui.horizontal_wrapped(|ui|{
-                ui.radio_value(&mut self.export_content,ExportContent::CurrentSelection,"Current selection");
-                ui.radio_value(&mut self.export_content,ExportContent::SelectedChannels,"All selected channels");
-                ui.radio_value(&mut self.export_content,ExportContent::AllData,"All data in range");
-            });
-            ui.checkbox(&mut self.export_skip_constant_frames,"Skip constant frames")
-                .on_hover_text("Exclude message/frame sources whose payload stays unchanged for the complete selected export range. Analog sources are retained.");
-
-            // First apply time + content scope. SelectedChannels is driven only by the Project Tree's
-            // bus/channel keys and does not require a Graphics message/byte/signal selection.
-            let mut rows=d.frames.iter().filter(|f|f.relative_time_s>=a&&f.relative_time_s<=b)
-                .filter(|f|match self.export_content {
-                    ExportContent::AllData=>true,
-                    ExportContent::SelectedChannels=>self.project_channels.contains(&project_channel_key(&f.bus_type.to_string(),f.channel_id)),
-                    ExportContent::CurrentSelection=>export_frame_selected(f,&self.graphics_sources,&self.graphics_signals,&self.signals),
-                }).collect::<Vec<_>>();
-
-            // Optional frame-source de-noising for CSV/Excel. A source is constant only when every
-            // payload in the selected export range is identical. Keep Analog because its packet
-            // payload contains sample arrays rather than a conventional message/frame payload.
-            let before_constant_skip=rows.len();
-            let mut constant_sources=BTreeSet::<String>::new();
-            if self.export_skip_constant_frames {
-                let mut source_state=BTreeMap::<String,(Vec<u8>,bool)>::new();
-                for f in &rows {
-                    if f.bus_type.to_string()=="ANALOG" { continue; }
-                    let key=format!("{}|{}|{}",f.bus_type,f.channel_id,f.frame_key);
-                    match source_state.get_mut(&key) {
-                        Some((first,changed))=>{ if !*changed && *first!=f.payload { *changed=true; } },
-                        None=>{ source_state.insert(key,(f.payload.clone(),false)); },
-                    }
-                }
-                for (key,(_,changed)) in source_state { if !changed { constant_sources.insert(key); } }
-                rows.retain(|f|{
-                    if f.bus_type.to_string()=="ANALOG" { return true; }
-                    !constant_sources.contains(&format!("{}|{}|{}",f.bus_type,f.channel_id,f.frame_key))
+        let mut close_request = false;
+        ctx.show_viewport_immediate(viewport_id, builder, |ctx, _class| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                workspace_section_header(ui, "Export Manager", "Choose scope, preview on demand, then export");
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::Frame::new().fill(palette.surface)
+                        .stroke(Stroke::new(1.0, palette.border))
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(egui::Margin::same(12))
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new("01 / Time range").strong());
+                            ui.horizontal_wrapped(|ui| {
+                                ui.radio_value(&mut self.export_range, ExportRange::CursorAB, "Cursor A–B");
+                                ui.radio_value(&mut self.export_range, ExportRange::Visible, "Visible waveform");
+                                ui.radio_value(&mut self.export_range, ExportRange::Full, "Full loaded capture");
+                            });
+                            let full_end = d.frames.last().map(|f| f.relative_time_s).unwrap_or(0.0);
+                            let (a, b) = match self.export_range {
+                                ExportRange::CursorAB => (self.cursor_a_s.min(self.cursor_b_s), self.cursor_a_s.max(self.cursor_b_s)),
+                                ExportRange::Visible => (self.graphics_view_start_s, self.graphics_view_end_s),
+                                ExportRange::Full => (0.0, full_end),
+                            };
+                            ui.monospace(format!("{a:.6}–{b:.6} s   Δ {:.6} s", (b - a).max(0.0)));
+                            ui.separator();
+                            ui.label(egui::RichText::new("02 / Content").strong());
+                            ui.horizontal_wrapped(|ui| {
+                                ui.radio_value(&mut self.export_content, ExportContent::CurrentSelection, "Current selection");
+                                ui.radio_value(&mut self.export_content, ExportContent::SelectedChannels, "Selected channels");
+                                ui.radio_value(&mut self.export_content, ExportContent::AllData, "All data");
+                            });
+                            ui.checkbox(&mut self.export_skip_constant_frames, "Exclude constant frames")
+                                .on_hover_text("CSV/Excel: remove conventional frame sources with unchanged payloads in the export range");
+                            if self.export_content == ExportContent::CurrentSelection
+                                && self.graphics_sources.is_empty() && self.graphics_signals.is_empty() {
+                                ui.colored_label(Color32::YELLOW,
+                                    "No source or signal selected. Select data in Waveforms, or choose another content scope.");
+                            }
+                            if self.export_content == ExportContent::SelectedChannels && self.project_channels.is_empty() {
+                                ui.colored_label(Color32::YELLOW,
+                                    "No channels enabled in Capture Explorer.");
+                            }
+                            ui.separator();
+                            ui.label(egui::RichText::new("03 / Format").strong());
+                            ui.horizontal_wrapped(|ui| {
+                                ui.radio_value(&mut self.export_format, ExportFormat::Excel, "Excel (.xlsx)");
+                                ui.radio_value(&mut self.export_format, ExportFormat::Csv, "CSV (.csv)");
+                                ui.radio_value(&mut self.export_format, ExportFormat::Pcapng, "PCAPNG (.pcapng)");
+                            });
+                            let pcapng_supported = self.export_format != ExportFormat::Pcapng
+                                || self.export_content == ExportContent::AllData;
+                            if !pcapng_supported {
+                                ui.colored_label(Color32::YELLOW,
+                                    "PCAPNG preserves original packet containers; choose All data for this format.");
+                            }
+                            if self.export_format == ExportFormat::Pcapng && self.export_skip_constant_frames {
+                                ui.small("Constant-frame filtering applies only to CSV/Excel, not to raw PCAPNG export.");
+                            }
+                            ui.separator();
+                            ui.label(egui::RichText::new("04 / Preview and export").strong());
+                            ui.small("Preview is calculated only when requested, never while typing, scrolling or resizing.");
+                            let key = self.export_preview_key(&d, a, b);
+                            if self.export_preview_summary.is_some_and(|preview| preview.signature != key) {
+                                self.export_preview_summary = None;
+                            }
+                            if ui.button("Calculate preview").clicked() {
+                                let (rows, skipped) = self.export_selected_rows(&d, a, b);
+                                let signals = self.export_selected_signals();
+                                let mapped = export::map_selected_signals(&rows, &signals);
+                                let mapped_count = mapped.iter().map(|r| r.signal.as_str())
+                                    .collect::<BTreeSet<_>>().len();
+                                self.export_preview_summary = Some(ExportPreviewSummary {
+                                    signature: key, frames: rows.len(), signals: signals.len(),
+                                    mapped_signals: mapped_count, mapped_samples: mapped.len(),
+                                    skipped_constant: skipped,
+                                });
+                            }
+                            if let Some(preview) = self.export_preview_summary {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(format!("{} frames", preview.frames));
+                                    ui.separator();
+                                    ui.label(format!("{} configured signals", preview.signals));
+                                    ui.separator();
+                                    ui.label(format!("{} mapped signals", preview.mapped_signals));
+                                    ui.separator();
+                                    ui.label(format!("{} mapped samples", preview.mapped_samples));
+                                    if self.export_skip_constant_frames {
+                                        ui.label(format!("{} constant frames omitted", preview.skipped_constant));
+                                    }
+                                });
+                            } else {
+                                ui.weak("Preview not calculated for these options.");
+                            }
+                            ui.add_space(6.0);
+                            if ui.add_enabled(pcapng_supported, egui::Button::new("Export…")).clicked() {
+                                match self.export_format {
+                                    ExportFormat::Csv | ExportFormat::Excel => {
+                                        let (rows, _) = self.export_selected_rows(&d, a, b);
+                                        if rows.is_empty() {
+                                            self.error = Some("No frames match the selected export range and content.".into());
+                                        } else {
+                                            let signals = self.export_selected_signals();
+                                            match self.export_format {
+                                                ExportFormat::Csv => if let Some(dest) = rfd::FileDialog::new()
+                                                    .add_filter("CSV", &["csv"]).set_file_name("loglens_export.csv").save_file() {
+                                                    match export::selected_mapped_csv(&dest, &rows, &signals) {
+                                                        Ok((nf, ns)) => self.info = Some(format!("CSV exported: {nf} frames, {ns} mapped samples")),
+                                                        Err(e) => self.error = Some(format!("CSV export failed: {e}")),
+                                                    }
+                                                },
+                                                ExportFormat::Excel => if let Some(dest) = rfd::FileDialog::new()
+                                                    .add_filter("Excel", &["xlsx"]).set_file_name("loglens_export.xlsx").save_file() {
+                                                    match export::selected_mapped_xlsx(&dest, &rows, &signals) {
+                                                        Ok((nf, ns)) => self.info = Some(format!("Excel exported: {nf} frames, {ns} mapped samples")),
+                                                        Err(e) => self.error = Some(format!("Excel export failed: {e}")),
+                                                    }
+                                                },
+                                                ExportFormat::Pcapng => {}
+                                            }
+                                        }
+                                    }
+                                    ExportFormat::Pcapng => {
+                                        if let Some(source) = self.path.clone() {
+                                            if let Some(dest) = rfd::FileDialog::new()
+                                                .add_filter("PCAPNG", &["pcapng"])
+                                                .set_file_name("loglens_segment.pcapng").save_file() {
+                                                match capture::write_pcapng_segment_with_timeline(
+                                                    &source, &dest, a, b, self.max_packets,
+                                                    d.frames.first().map(|f| f.timestamp_ns), d.source_time) {
+                                                    Ok(n) => self.info = Some(format!("PCAPNG exported: {n} packets")),
+                                                    Err(e) => self.error = Some(format!("PCAPNG export failed: {e}")),
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
                 });
-            }
-            let skipped_constant_frames=before_constant_skip.saturating_sub(rows.len());
-
-            let selected_signals=self.signals.iter().filter(|sig|match self.export_content {
-                ExportContent::CurrentSelection=>self.graphics_signals.contains(&sig.name),
-                ExportContent::SelectedChannels|ExportContent::AllData=>true,
-            }).cloned().collect::<Vec<_>>();
-            let mapped=export::map_selected_signals(&rows,&selected_signals);
-            let mapped_names=mapped.iter().map(|r|r.signal.as_str()).collect::<BTreeSet<_>>().len();
-            ui.separator();ui.strong("Mapping status");
-            ui.horizontal_wrapped(|ui|{
-                ui.label(format!("{} frame(s)",rows.len()));ui.separator();
-                ui.label(format!("{} configured signal(s)",selected_signals.len()));ui.separator();
-                ui.label(format!("{} mapped signal(s)",mapped_names));ui.separator();
-                ui.label(format!("{} mapped sample(s)",mapped.len()));
-                if self.export_skip_constant_frames { ui.separator(); ui.label(format!("{} constant frame(s) skipped",skipped_constant_frames)); }
             });
-            if self.export_content==ExportContent::CurrentSelection && self.graphics_sources.is_empty() && self.graphics_signals.is_empty(){
-                ui.colored_label(Color32::YELLOW,"No current selection. Select a message/byte/signal in Graphics, choose All selected channels, or choose All data in range.");
-            }
-            if self.export_content==ExportContent::SelectedChannels && self.project_channels.is_empty(){
-                ui.colored_label(Color32::YELLOW,"No Project Tree channels are enabled. Select one or more channels or choose All data in range.");
-            }
-            ui.separator();ui.strong("Format");
-            ui.horizontal(|ui|{
-                ui.radio_value(&mut self.export_format,ExportFormat::Excel,"Excel (.xlsx)");
-                ui.radio_value(&mut self.export_format,ExportFormat::Csv,"CSV (.csv)");
-                ui.radio_value(&mut self.export_format,ExportFormat::Pcapng,"PCAPNG (.pcapng)");
-            });
-            let pcapng_scope_supported=self.export_format!=ExportFormat::Pcapng || self.export_content==ExportContent::AllData;
-            if self.export_format==ExportFormat::Pcapng && self.export_content!=ExportContent::AllData{
-                ui.colored_label(Color32::YELLOW,"PCAPNG preserves original packet containers and currently supports All data in range only. Use CSV/Excel for Current selection or All selected channels.");
-            }
-            if self.export_format==ExportFormat::Pcapng && self.export_skip_constant_frames {
-                ui.small("Skip constant frames applies to CSV/Excel normalized-frame export; it is not applied to PCAPNG packet-container export.");
-            }
-            ui.separator();
-            ui.horizontal(|ui|{
-                let export_enabled=pcapng_scope_supported && (!rows.is_empty() || self.export_format==ExportFormat::Pcapng);
-                if ui.add_enabled(export_enabled,egui::Button::new("Export")).clicked(){
-                    match self.export_format{
-                        ExportFormat::Csv=>if let Some(dest)=rfd::FileDialog::new().add_filter("CSV", &["csv"]).set_file_name("loglens_export.csv").save_file(){
-                            match export::selected_mapped_csv(&dest,&rows,&selected_signals){Ok((nf,ns))=>self.info=Some(format!("CSV exported: {nf} frames, {ns} mapped samples")),Err(e)=>self.error=Some(format!("CSV export failed: {e}"))}
-                        },
-                        ExportFormat::Excel=>if let Some(dest)=rfd::FileDialog::new().add_filter("Excel", &["xlsx"]).set_file_name("loglens_export.xlsx").save_file(){
-                            match export::selected_mapped_xlsx(&dest,&rows,&selected_signals){Ok((nf,ns))=>self.info=Some(format!("Excel exported: {nf} frames, {ns} mapped samples")),Err(e)=>self.error=Some(format!("Excel export failed: {e}"))}
-                        },
-                        ExportFormat::Pcapng=>if let Some(source)=self.path.clone(){if let Some(dest)=rfd::FileDialog::new().add_filter("PCAPNG", &["pcapng"]).set_file_name("loglens_segment.pcapng").save_file(){
-                            match capture::write_pcapng_segment_with_timeline(&source,&dest,a,b,self.max_packets,d.frames.first().map(|f|f.timestamp_ns),d.source_time){Ok(n)=>self.info=Some(format!("PCAPNG exported: {n} packets")),Err(e)=>self.error=Some(format!("PCAPNG export failed: {e}"))}
-                        }}
-                    }
-                }
-            });
-            });
-            if ctx.input(|i|i.viewport().close_requested()) {
-                close_request=true;
-            }
+            if ctx.input(|i| i.viewport().close_requested()) { close_request = true; }
         });
         if close_request {
-            self.show_export_manager=false;
+            self.show_export_manager = false;
+            self.export_preview_summary = None;
         }
     }
 
@@ -9652,6 +9755,18 @@ mod tecmp_graph_regressions {
             assert_eq!(digital_value_at(&d,name,"0x123",1,Some(0),Some(7),5.001),Some(1.0));
         }
     }
+    #[test]
+    fn export_preview_key_changes_with_range_and_channel_scope() {
+        let d = data();
+        let mut app = LogLensApp::initial_state();
+        let a = app.export_preview_key(&d, 0.0, 1.0);
+        assert_ne!(a, app.export_preview_key(&d, 0.0, 2.0));
+        app.project_channels.insert("CAN|1".into());
+        assert_ne!(a, app.export_preview_key(&d, 0.0, 1.0));
+        let rows = app.export_selected_rows(&d, 0.0, 99999.0).0;
+        assert_eq!(rows.len(), d.frames.len());
+    }
+
     #[test]
     fn capture_explorer_responsive_panels_keep_trace_space() {
         assert_eq!(explorer_panel_width(1440.0, 360.0), 360.0);
